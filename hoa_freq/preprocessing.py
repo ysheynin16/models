@@ -9,13 +9,29 @@ import shutil
 from pandas.core.groupby.generic import DataFrameGroupBy
 import psycopg2
 
-##################################
+"""
+Structure:
+
+Input raw datatree dumps in .txt.gzip format in data/ --->
+
+Unzip data, save raw data as parquet in long format
+        - every row is a hoa fee for a property
+        - properties may have up to 4 entries ---->
+
+Feature Engineering
+    - add a couple of engineered features
+    - import listhub data for median listing prices 
+        - impute state median where zipcode unavailable)
+    - one hot encode categoricals
+    - index by propertyID_hoa# ----->
+    - assert df has same shape as training data
+
+Save df for batch predictions
+
+"""
+
 
 ## Unzip raw data into .txt files
-
-######################################
-
-
 def unzip(gz_file):
     with gzip.open(f"{gz_file}", "rb") as f_in:
         with open(f"{gz_file[:-3]}", "wb") as f_out:
@@ -40,9 +56,6 @@ def format_and_subset(df):
     df_long = pd.wide_to_long(df, hoa_cols, i="PropertyID", j="hoa_num")
     df_long.index = df_long.index.set_names(["PropertyID", "hoa_num"])
     df_long = df_long.reset_index()
-    df_long = df_long[
-        ~df_long["FeeValueHOA_"].isna()
-    ]  # remove blank hoa fee entries due to wide data format
 
     return df_long
 
@@ -78,6 +91,9 @@ if __name__ == "__main__":
     df.to_parquet("data/hoa_data_raw.parquet")
     df = format_and_subset(df)
     df.to_parquet("data/hoa_data_long.parquet")
+    df = df[
+        ~df["FeeValueHOA_"].isna()
+    ]  # remove blank hoa fee entries due to wide data format
 
     ## Feature engineering
     # whether property has more than 1 hoa
@@ -129,7 +145,6 @@ if __name__ == "__main__":
 
     # select features
     dummy_cols = ["TypeHOA_", "SitusState"]
-    temp_cols = ["SitusState"]  # "city-state"
     continuous_cols = [
         "FeeValueHOA_",
         "prop_total_fees",
@@ -137,16 +152,14 @@ if __name__ == "__main__":
         "median_price",
         "num_hoas",
     ]
-    hoa_id = df.PropertyID + "_" + df.hoa_num
+    hoa_id = (df.PropertyID.astype(str) + "_" + df.hoa_num.astype(str)).rename("hoa_id")
 
     X = pd.concat(
         [
             pd.get_dummies(df[dummy_cols], dummy_na=True),
             df[continuous_cols],
-            df[temp_cols],
-            hoa_id,
         ],
         axis=1,
-    ).set_index(hoa_id)
+    ).set_index(hoa_id, drop=True)
     print(X.head())
     assert X.isna().sum().sum() < 1, "Nans detected"
